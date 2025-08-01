@@ -13,7 +13,6 @@
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
-    "@openai/agents": "^1.0.0",
     "openai": "^4.60.0",
     "twilio": "^4.19.0",
     "ws": "^8.14.2",
