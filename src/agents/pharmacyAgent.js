@@ -1,7 +1,8 @@
 import { RealtimeAgent, tool } from '@openai/agents/realtime';
 import { z } from 'zod';
 import { TwilioService } from '../services/twilioService.js';
-import { findPharmaciesByLocation } from '../config/pharmacies.js';
+import { findPharmaciesByLocation, getPharmacyById, updatePharmacyInventory } from '../config/pharmacies.js';
+import { callLogsManager } from '../utils/localStorage.js';
 
 // Initialize Twilio service
 const twilioService = new TwilioService();
@@ -50,6 +51,15 @@ const checkMedicationAvailability = tool({
   }),
   execute: async ({ pharmacyId, medicationName, dosage, quantity, patientInfo }) => {
     try {
+      const pharmacy = await getPharmacyById(pharmacyId);
+      if (!pharmacy) {
+        return {
+          success: false,
+          error: 'Pharmacy not found',
+          message: `Pharmacy with ID ${pharmacyId} not found`
+        };
+      }
+
       const medicationInfo = {
         name: medicationName,
         dosage,
@@ -57,8 +67,7 @@ const checkMedicationAvailability = tool({
         patientInfo
       };
 
-      // In a real implementation, you'd have a proper webhook URL
-      const webhookUrl = process.env.WEBHOOK_BASE_URL || 'https://your-domain.com/webhook';
+      const webhookUrl = process.env.WEBHOOK_BASE_URL || 'http://localhost:3000/webhook';
       
       const callResult = await twilioService.callPharmacy(
         pharmacyId, 
@@ -66,13 +75,18 @@ const checkMedicationAvailability = tool({
         webhookUrl
       );
 
-      // Store the call information for tracking
-      activePharmacyCalls.set(callResult.callSid, {
+      // Store the call information locally
+      const callData = {
+        callSid: callResult.callSid,
         pharmacyId,
+        pharmacyName: callResult.pharmacyName,
         medicationInfo,
         status: 'calling',
-        timestamp: new Date()
-      });
+        timestamp: new Date().toISOString()
+      };
+
+      await callLogsManager.saveCall(callData);
+      activePharmacyCalls.set(callResult.callSid, callData);
 
       return {
         success: true,
