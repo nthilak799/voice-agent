@@ -3,11 +3,21 @@ import { getPharmacyById } from '../config/pharmacies.js';
 
 export class TwilioService {
   constructor() {
-    this.client = twilio(
-      process.env.TWILIO_ACCOUNT_SID,
-      process.env.TWILIO_AUTH_TOKEN
-    );
-    this.fromNumber = process.env.TWILIO_PHONE_NUMBER;
+    // Check if Twilio credentials are provided
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    
+    if (accountSid && authToken && accountSid.startsWith('AC') && authToken.length > 10) {
+      this.client = twilio(accountSid, authToken);
+      this.fromNumber = process.env.TWILIO_PHONE_NUMBER;
+      this.enabled = true;
+      console.log('✅ Twilio service initialized successfully');
+    } else {
+      console.warn('⚠️  Twilio credentials not found or invalid. Call functionality will be simulated.');
+      this.client = null;
+      this.fromNumber = null;
+      this.enabled = false;
+    }
   }
 
   /**
@@ -18,10 +28,34 @@ export class TwilioService {
    * @returns {Promise<object>} Call details from Twilio
    */
   async callPharmacy(pharmacyId, medicationInfo, webhookUrl) {
-    const pharmacy = getPharmacyById(pharmacyId);
+    const pharmacy = await getPharmacyById(pharmacyId);
     
     if (!pharmacy) {
       throw new Error(`Pharmacy with ID ${pharmacyId} not found`);
+    }
+
+    if (!this.enabled) {
+      // Simulate the call for testing purposes
+      const simulatedCallSid = `SIM_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      console.log(`📞 SIMULATED CALL to ${pharmacy.name} for ${medicationInfo.name}`);
+      console.log(`   Pharmacy: ${pharmacy.name} (${pharmacy.phone})`);
+      console.log(`   Medication: ${medicationInfo.name}${medicationInfo.dosage ? ` ${medicationInfo.dosage}` : ''}`);
+      console.log(`   Call SID: ${simulatedCallSid}`);
+      
+      // Simulate a successful response after a delay
+      setTimeout(() => {
+        console.log(`📞 SIMULATED RESPONSE: "Yes, we have ${medicationInfo.name} in stock. We have 50+ tablets available."`);
+      }, 2000);
+      
+      return {
+        callSid: simulatedCallSid,
+        pharmacyName: pharmacy.name,
+        pharmacyPhone: pharmacy.phone,
+        status: 'initiated',
+        medicationInfo,
+        simulated: true
+      };
     }
 
     try {
@@ -86,6 +120,25 @@ export class TwilioService {
    * @returns {Promise<object>} Call details including recordings
    */
   async getCallDetails(callSid) {
+    if (!this.enabled || callSid.startsWith('SIM_')) {
+      // Return simulated call details
+      return {
+        call: {
+          sid: callSid,
+          status: 'completed',
+          duration: 45,
+          to: '+1234567890',
+          from: '+1555000000'
+        },
+        recordings: [{
+          sid: `REC_${callSid}`,
+          uri: `/recordings/simulated`,
+          duration: 30,
+          transcription: "Yes, we have that medication in stock. We have 50+ tablets available at $15.99. Would you like us to hold it for pickup?"
+        }]
+      };
+    }
+
     try {
       const call = await this.client.calls(callSid).fetch();
       const recordings = await this.client.recordings.list({

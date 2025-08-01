@@ -1,0 +1,46 @@
+[
+  {
+    "id": "cvs_main_st",
+    "createdAt": "2025-08-01T17:31:11.662Z",
+    "name": "CVS Pharmacy - Main Street",
+    "phone": "+1234567890",
+    "address": "123 Main St, Anytown, USA",
+    "zipCode": "12345",
+    "hours": "8:00 AM - 10:00 PM",
+    "specialty": "general",
+    "inventory": {}
+  },
+  {
+    "id": "walgreens_oak_ave",
+    "createdAt": "2025-08-01T17:31:11.663Z",
+    "name": "Walgreens - Oak Avenue",
+    "phone": "+1234567891",
+    "address": "456 Oak Ave, Anytown, USA",
+    "zipCode": "12345",
+    "hours": "7:00 AM - 11:00 PM",
+    "specialty": "general",
+    "inventory": {}
+  },
+  {
+    "id": "specialty_pharmacy",
+    "createdAt": "2025-08-01T17:31:11.664Z",
+    "name": "Specialty Care Pharmacy",
+    "phone": "+1234567892",
+    "address": "789 Medical Dr, Anytown, USA",
+    "zipCode": "12346",
+    "hours": "9:00 AM - 6:00 PM",
+    "specialty": "specialty_medications",
+    "inventory": {}
+  },
+  {
+    "id": "compounding_pharmacy",
+    "createdAt": "2025-08-01T17:31:11.664Z",
+    "name": "Custom Compounding Pharmacy",
+    "phone": "+1234567893",
+    "address": "321 Health Blvd, Anytown, USA",
+    "zipCode": "12345",
+    "hours": "8:00 AM - 8:00 PM",
+    "specialty": "compounding",
+    "inventory": {}
+  }
+]

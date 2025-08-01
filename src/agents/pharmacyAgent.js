@@ -1,8 +1,12 @@
-import { RealtimeAgent, tool } from '@openai/agents/realtime';
-import { z } from 'zod';
+import OpenAI from 'openai';
 import { TwilioService } from '../services/twilioService.js';
 import { findPharmaciesByLocation, getPharmacyById, updatePharmacyInventory } from '../config/pharmacies.js';
 import { callLogsManager } from '../utils/localStorage.js';
+
+// Initialize OpenAI client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // Initialize Twilio service
 const twilioService = new TwilioService();
@@ -10,16 +14,123 @@ const twilioService = new TwilioService();
 // Store for tracking active calls and their status
 const activePharmacyCalls = new Map();
 
-// Tool for finding pharmacies by location
-const findPharmacies = tool({
-  name: 'findPharmacies',
-  description: 'Find pharmacies in a specific area based on zip code and medication type',
-  parameters: z.object({
-    zipCode: z.string().describe('The zip code where to search for pharmacies'),
-    medicationType: z.string().optional().describe('Type of medication: general, specialty_medications, or compounding'),
-  }),
-  execute: async ({ zipCode, medicationType = 'general' }) => {
-    const pharmacies = findPharmaciesByLocation(zipCode, medicationType);
+// Tool definitions for the pharmacy agent
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "findPharmacies",
+      description: "Find pharmacies in a specific area based on zip code and medication type",
+      parameters: {
+        type: "object",
+        properties: {
+          zipCode: {
+            type: "string",
+            description: "The zip code where to search for pharmacies"
+          },
+          medicationType: {
+            type: "string",
+            description: "Type of medication: general, specialty_medications, or compounding",
+            enum: ["general", "specialty_medications", "compounding"]
+          }
+        },
+        required: ["zipCode"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "checkMedicationAvailability",
+      description: "Call a pharmacy to check if a specific medication is available in stock",
+      parameters: {
+        type: "object",
+        properties: {
+          pharmacyId: {
+            type: "string",
+            description: "The ID of the pharmacy to call"
+          },
+          medicationName: {
+            type: "string",
+            description: "The name of the medication to check"
+          },
+          dosage: {
+            type: "string",
+            description: "The dosage of the medication (e.g., '10mg', '500mg')"
+          },
+          quantity: {
+            type: "string",
+            description: "The quantity needed (e.g., '30 tablets', '1 bottle')"
+          },
+          patientInfo: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              phone: { type: "string" },
+              insuranceInfo: { type: "string" }
+            }
+          }
+        },
+        required: ["pharmacyId", "medicationName"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "checkCallStatus",
+      description: "Check the status of a pharmacy call and get results if available",
+      parameters: {
+        type: "object",
+        properties: {
+          callId: {
+            type: "string",
+            description: "The call ID returned from checkMedicationAvailability"
+          }
+        },
+        required: ["callId"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "scheduleMedicationPickup",
+      description: "Schedule a pickup time for medication after confirming availability",
+      parameters: {
+        type: "object",
+        properties: {
+          pharmacyId: {
+            type: "string",
+            description: "The ID of the pharmacy"
+          },
+          medicationName: {
+            type: "string",
+            description: "The name of the medication"
+          },
+          pickupTime: {
+            type: "string",
+            description: "Preferred pickup time"
+          },
+          patientName: {
+            type: "string",
+            description: "Name of the patient picking up"
+          },
+          contactPhone: {
+            type: "string",
+            description: "Contact phone number"
+          }
+        },
+        required: ["pharmacyId", "medicationName", "pickupTime", "patientName", "contactPhone"]
+      }
+    }
+  }
+];
+
+// Tool execution functions
+const toolExecutors = {
+  findPharmacies: async ({ zipCode, medicationType = 'general' }) => {
+    const pharmacies = await findPharmaciesByLocation(zipCode, medicationType);
     
     return {
       found: pharmacies.length,
@@ -32,24 +143,8 @@ const findPharmacies = tool({
       }))
     };
   },
-});
 
-// Tool for calling pharmacy to check medication availability
-const checkMedicationAvailability = tool({
-  name: 'checkMedicationAvailability',
-  description: 'Call a pharmacy to check if a specific medication is available in stock',
-  parameters: z.object({
-    pharmacyId: z.string().describe('The ID of the pharmacy to call'),
-    medicationName: z.string().describe('The name of the medication to check'),
-    dosage: z.string().optional().describe('The dosage of the medication (e.g., "10mg", "500mg")'),
-    quantity: z.string().optional().describe('The quantity needed (e.g., "30 tablets", "1 bottle")'),
-    patientInfo: z.object({
-      name: z.string().optional(),
-      phone: z.string().optional(),
-      insuranceInfo: z.string().optional()
-    }).optional().describe('Patient information for the pharmacy')
-  }),
-  execute: async ({ pharmacyId, medicationName, dosage, quantity, patientInfo }) => {
+     checkMedicationAvailability: async ({ pharmacyId, medicationName, dosage, quantity, patientInfo }) => {
     try {
       const pharmacy = await getPharmacyById(pharmacyId);
       if (!pharmacy) {
@@ -59,6 +154,8 @@ const checkMedicationAvailability = tool({
           message: `Pharmacy with ID ${pharmacyId} not found`
         };
       }
+
+
 
       const medicationInfo = {
         name: medicationName,
@@ -103,16 +200,8 @@ const checkMedicationAvailability = tool({
       };
     }
   },
-});
 
-// Tool for checking the status of a pharmacy call
-const checkCallStatus = tool({
-  name: 'checkCallStatus', 
-  description: 'Check the status of a pharmacy call and get results if available',
-  parameters: z.object({
-    callId: z.string().describe('The call ID returned from checkMedicationAvailability')
-  }),
-  execute: async ({ callId }) => {
+     checkCallStatus: async ({ callId }) => {
     try {
       const callInfo = activePharmacyCalls.get(callId);
       if (!callInfo) {
@@ -121,6 +210,8 @@ const checkCallStatus = tool({
           message: 'Call ID not found'
         };
       }
+
+
 
       const callDetails = await twilioService.getCallDetails(callId);
       
@@ -165,20 +256,8 @@ const checkCallStatus = tool({
       };
     }
   },
-});
 
-// Tool for scheduling medication pickup
-const scheduleMedicationPickup = tool({
-  name: 'scheduleMedicationPickup',
-  description: 'Schedule a pickup time for medication after confirming availability',
-  parameters: z.object({
-    pharmacyId: z.string().describe('The ID of the pharmacy'),
-    medicationName: z.string().describe('The name of the medication'),
-    pickupTime: z.string().describe('Preferred pickup time'),
-    patientName: z.string().describe('Name of the patient picking up'),
-    contactPhone: z.string().describe('Contact phone number')
-  }),
-  execute: async ({ pharmacyId, medicationName, pickupTime, patientName, contactPhone }) => {
+  scheduleMedicationPickup: async ({ pharmacyId, medicationName, pickupTime, patientName, contactPhone }) => {
     // In a real implementation, this would integrate with pharmacy scheduling systems
     return {
       success: true,
@@ -186,13 +265,11 @@ const scheduleMedicationPickup = tool({
       message: `Pickup scheduled for ${medicationName} at ${pickupTime}. Confirmation number: PU${Date.now()}`,
       reminder: 'Please bring a valid ID and insurance card when picking up your medication.'
     };
-  },
-});
+  }
+};
 
-// Create the main pharmacy agent
-export const pharmacyAgent = new RealtimeAgent({
-  name: 'Pharmacy Assistant',
-  instructions: `
+// Pharmacy agent system prompt
+const SYSTEM_PROMPT = `
 # Pharmacy Medication Availability Assistant
 
 ## Identity
@@ -214,21 +291,6 @@ Your primary responsibility is to help patients:
 ## Tone
 Warm and professional, like a knowledgeable healthcare assistant
 
-## Level of Enthusiasm
-Calm and measured - appropriate for healthcare settings
-
-## Level of Formality
-Professional but approachable - use "you" instead of formal titles unless requested
-
-## Level of Emotion
-Compassionate and supportive, especially when dealing with medication needs
-
-## Filler Words
-Use minimal filler words to maintain professionalism - occasionally use "um" or "let me see" when processing information
-
-## Pacing
-Speak at a moderate pace, allowing time for patients to process medication information
-
 ## Instructions
 - Always confirm medication names, dosages, and quantities by spelling them out when unclear
 - If a patient provides personal information, repeat it back to confirm accuracy
@@ -238,26 +300,105 @@ Speak at a moderate pace, allowing time for patients to process medication infor
 - If medication is not available at one pharmacy, offer to check others in the area
 - Be sensitive to urgent medication needs and prioritize accordingly
 
-## Conversation Flow
-1. **Information Gathering**: Get medication details, location, and patient preferences
-2. **Pharmacy Search**: Find suitable pharmacies in the patient's area  
-3. **Availability Check**: Call selected pharmacies to check stock
-4. **Results Communication**: Clearly communicate availability and options
-5. **Next Steps**: Help with pickup scheduling or alternative pharmacy suggestions
-
 ## Important Notes
 - Never provide medical advice - only help with availability and logistics
 - Always verify sensitive information by repeating it back
 - If a call fails or pharmacy is unresponsive, offer alternative options
 - Be patient with elderly callers who may need extra time
-  `,
-  tools: [
-    findPharmacies,
-    checkMedicationAvailability, 
-    checkCallStatus,
-    scheduleMedicationPickup
-  ]
-});
+`;
+
+// Function to execute tool calls
+async function executeToolCall(toolName, parameters) {
+  const executor = toolExecutors[toolName];
+  if (!executor) {
+    throw new Error(`Unknown tool: ${toolName}`);
+  }
+  
+  return await executor(parameters);
+}
+
+// Function to process a user message and get agent response
+export async function processUserMessage(userMessage, conversationHistory = []) {
+  try {
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...conversationHistory,
+      { role: 'user', content: userMessage }
+    ];
+
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: messages,
+      tools: tools,
+      tool_choice: 'auto',
+      temperature: 0.7,
+      max_tokens: 1000
+    });
+
+    const assistantMessage = response.choices[0].message;
+    const toolCalls = assistantMessage.tool_calls;
+
+    if (toolCalls && toolCalls.length > 0) {
+      // Execute tool calls
+      const toolResults = [];
+      
+      for (const toolCall of toolCalls) {
+        try {
+          const result = await executeToolCall(
+            toolCall.function.name,
+            JSON.parse(toolCall.function.arguments)
+          );
+          
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            result: result
+          });
+        } catch (error) {
+          toolResults.push({
+            tool_call_id: toolCall.id,
+            result: { error: error.message }
+          });
+        }
+      }
+
+      // Get final response with tool results
+      const finalMessages = [
+        ...messages,
+        assistantMessage,
+        ...toolResults.map(result => ({
+          role: 'tool',
+          tool_call_id: result.tool_call_id,
+          content: JSON.stringify(result.result)
+        }))
+      ];
+
+      const finalResponse = await openai.chat.completions.create({
+        model: 'gpt-4',
+        messages: finalMessages,
+        temperature: 0.7,
+        max_tokens: 1000
+      });
+
+      return {
+        message: finalResponse.choices[0].message.content,
+        toolCalls: toolCalls,
+        toolResults: toolResults
+      };
+    }
+
+    return {
+      message: assistantMessage.content,
+      toolCalls: null,
+      toolResults: null
+    };
+  } catch (error) {
+    console.error('Error processing user message:', error);
+    return {
+      message: "I'm sorry, I encountered an error while processing your request. Please try again.",
+      error: error.message
+    };
+  }
+}
 
 // Export the active calls map for external access if needed
-export { activePharmacyCalls };
+export { activePharmacyCalls, tools };

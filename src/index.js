@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { pharmacyAgent } from './agents/pharmacyAgent.js';
+import { processUserMessage, tools } from './agents/pharmacyAgent.js';
 import webhookHandler from './server/webhookHandler.js';
 
 const app = express();
@@ -82,15 +82,32 @@ app.post('/api/pharmacies', async (req, res) => {
   }
 });
 
+// Chat endpoint for interacting with the pharmacy agent
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, conversationHistory = [] } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const response = await processUserMessage(message, conversationHistory);
+    res.json(response);
+  } catch (error) {
+    console.error('Error in chat endpoint:', error);
+    res.status(500).json({ error: 'Failed to process message' });
+  }
+});
+
 // WebSocket endpoint for real-time voice agent communication
 app.get('/voice-agent', (req, res) => {
   // This would typically upgrade to WebSocket for real-time communication
   // For now, we'll provide connection information
   res.json({
-    message: 'Voice agent endpoint',
-    agent: pharmacyAgent.name,
-    instructions: 'Connect via WebSocket or WebRTC for real-time communication',
-    tools: pharmacyAgent.tools?.map(tool => tool.name) || []
+    message: 'Voice agent endpoint - use /api/chat for text-based interaction',
+    agent: 'Pharmacy Assistant',
+    instructions: 'Send POST requests to /api/chat with message and conversationHistory',
+    tools: tools.map(tool => tool.function.name)
   });
 });
 
@@ -105,23 +122,11 @@ app.post('/api/test/call-pharmacy', async (req, res) => {
   }
 
   try {
-    // Simulate calling the pharmacy tool
-    const checkMedicationTool = pharmacyAgent.tools?.find(
-      tool => tool.name === 'checkMedicationAvailability'
-    );
-
-    if (checkMedicationTool) {
-      const result = await checkMedicationTool.execute({
-        pharmacyId,
-        medicationName,
-        dosage,
-        quantity
-      });
-      
-      res.json(result);
-    } else {
-      res.status(500).json({ error: 'Medication availability tool not found' });
-    }
+    // Use the pharmacy agent to process the request
+    const message = `Please check medication availability for ${medicationName}${dosage ? ` ${dosage}` : ''}${quantity ? ` quantity: ${quantity}` : ''} at pharmacy ${pharmacyId}`;
+    
+    const response = await processUserMessage(message, []);
+    res.json(response);
   } catch (error) {
     console.error('Error testing pharmacy call:', error);
     res.status(500).json({ error: 'Failed to test pharmacy call' });
